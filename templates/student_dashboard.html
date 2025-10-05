@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard - Coding Questions Finder</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <nav class="top-nav">
+        <div class="top-nav-inner">
+            <a href="/" class="brand"><i class="fas fa-code"></i> <span>Coding Easy-Placement Easy</span></a>
+            <div class="nav-links">
+                <span class="nav-link" style="pointer-events:none; background:#edf2f7;">Student Dashboard</span>
+            </div>
+            <div class="nav-actions">
+                <a href="{{ url_for('mentor_dashboard') }}" class="btn btn-outline"><i class="fas fa-chalkboard-teacher"></i> Mentor</a>
+                <a href="{{ url_for('logout') }}" class="btn btn-primary"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </div>
+        </div>
+    </nav>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <div class="user-info">
+                    <div class="user-details">
+                        <span class="welcome-text">Welcome, <strong>{{ user }}</strong>!</span>
+                        <span class="user-type-badge user-type-{{ user_type }}">{{ user_type.title() }}</span>
+                    </div>
+                    <a href="{{ url_for('logout') }}" class="logout-btn">
+                        <i class="fas fa-sign-out-alt"></i>
+                        Logout
+                    </a>
+                </div>
+                <h1 class="title">
+                    <i class="fas fa-graduation-cap"></i>
+                    Coding Easy-Placement Easy — Student Dashboard
+                </h1>
+                <p class="subtitle">Practice with questions curated by your mentors</p>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- Published Questions Section -->
+            <div class="dashboard-section">
+                <div class="section-header">
+                    <h2><i class="fas fa-book-open"></i> Published Questions</h2>
+                    <p>Practice with questions selected by your mentors</p>
+                </div>
+
+                <div class="published-questions">
+                    {% if published_questions %}
+                        <div class="questions-grid">
+                            {% for question in published_questions %}
+                            <div class="published-question-card">
+                                <div class="question-header">
+                                    <h3>{{ question.query }}</h3>
+                                    <div class="question-meta">
+                                        {% if question.published_at %}
+                                            <small>Created: {{ question.formatted_created_at }}</small>
+                                            <small>Published: {{ question.formatted_published_at }}</small>
+                                        {% else %}
+                                            <small>Created: {{ question.formatted_created_at }}</small>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                
+                                <div class="question-summary">
+                                    <p>{{ question.summary }}</p>
+                                </div>
+                                
+                                <div class="question-actions">
+                                    <button class="view-questions-btn" onclick="viewQuestions('{{ question.id }}')">
+                                        <i class="fas fa-eye"></i>
+                                        View Questions
+                                    </button>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="empty-state">
+                            <i class="fas fa-book"></i>
+                            <h3>No published questions yet</h3>
+                            <p>Your mentors haven't published any questions yet. Check back later!</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>Student Dashboard • Practice with mentor-curated questions</p>
+        </footer>
+    </div>
+
+    <!-- Questions Modal -->
+    <div id="questionsModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Practice Questions</h3>
+                <button class="close-btn" onclick="closeModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Questions will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // View questions for a published question set
+        async function viewQuestions(questionId) {
+            const modal = document.getElementById('questionsModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalBody = document.getElementById('modalBody');
+            
+            modalBody.innerHTML = '<div class="spinner"></div>';
+            modal.style.display = 'flex';
+
+            try {
+                const response = await fetch(`/get_published_question_details/${questionId}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    const questionSet = data.question;
+                    modalTitle.textContent = `Practice Questions for: ${questionSet.query}`;
+                    
+                    let questionsHtml = '<div class="questions-grid">';
+                    questionSet.questions_data.forEach((q, index) => {
+                        questionsHtml += `
+                            <div class="question-card">
+                                <div class="question-header">
+                                    <span class="question-number">${index + 1}</span>
+                                    <div class="platform-badge platform-${q.platform.toLowerCase().replace(' ', '-')}">
+                                        ${q.platform}
+                                    </div>
+                                </div>
+                                <div class="question-content">
+                                    <h4 class="question-topic">${q.topic}</h4>
+                                    <p class="question-category">${q.category}</p>
+                                </div>
+                                <div class="question-meta">
+                                    <div class="difficulty difficulty-${q.difficulty_level.toLowerCase()}">
+                                        <i class="fas fa-signal"></i>
+                                        ${q.difficulty_level}
+                                    </div>
+                                    <div class="company">
+                                        <i class="fas fa-building"></i>
+                                        ${q.company}
+                                    </div>
+                                </div>
+                                <a href="${q.url}" target="_blank" class="question-link">
+                                    <i class="fas fa-external-link-alt"></i>
+                                    View Problem
+                                </a>
+                            </div>
+                        `;
+                    });
+                    questionsHtml += '</div>';
+                    modalBody.innerHTML = questionsHtml;
+                } else {
+                    modalBody.innerHTML = `<p class="error-message">${data.error || 'Could not load details.'}</p>`;
+                }
+            } catch (error) {
+                modalBody.innerHTML = `<p class="error-message">Network error. Please try again.</p>`;
+            }
+        }
+        
+        function closeModal() {
+            document.getElementById('questionsModal').style.display = 'none';
+        }
+        
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('questionsModal');
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

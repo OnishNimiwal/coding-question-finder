@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coding Questions Finder</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <nav class="top-nav">
+        <div class="top-nav-inner">
+            <a href="/" class="brand"><i class="fas fa-code"></i> <span>Coding Easy Placement Easy</span></a>
+            <div class="nav-links">
+                <span class="nav-link" style="pointer-events:none; opacity:.8;">Platforms: LeetCode • GeeksforGeeks • HackerRank • InterviewBit • CodeChef</span>
+            </div>
+            <div class="nav-actions">
+                {% if session.get('user_id') %}
+                    <a href="{{ url_for('logout') }}" class="btn btn-primary"><i class="fas fa-sign-out-alt"></i> Logout</a>
+                {% else %}
+                    <a href="{{ url_for('login') }}" class="btn btn-outline"><i class="fas fa-sign-in-alt"></i> Login</a>
+                    <a href="{{ url_for('register') }}" class="btn btn-primary"><i class="fas fa-user-plus"></i> Register</a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <div class="user-info">
+                    <div class="user-details">
+                        <span class="welcome-text">Welcome, <strong>{{ user }}</strong>!</span>
+                        <span class="user-type-badge user-type-{{ user_type }}">{{ user_type.title() }}</span>
+                    </div>
+                    <a href="{{ url_for('logout') }}" class="logout-btn">
+                        <i class="fas fa-sign-out-alt"></i>
+                        Logout
+                    </a>
+                </div>
+                <h1 class="title">
+                    <i class="fas fa-code"></i>
+                    Coding Easy-Placement Easy
+                </h1>
+                <p class="subtitle">Find the top 5 matching questions from different coding platforms</p>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <div class="search-section">
+                <div class="search-container">
+                    <form id="searchForm" class="search-form">
+                        <div class="input-group">
+                            <input 
+                                type="text" 
+                                id="queryInput" 
+                                placeholder="Enter your coding question or topic..." 
+                                class="search-input"
+                                required
+                            >
+                            <button type="submit" class="search-btn" id="searchBtn">
+                                <i class="fas fa-search"></i>
+                                <span>Search</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="results-section" id="resultsSection" style="display: none;">
+                <div class="summary-card" id="summaryCard">
+                    <h3><i class="fas fa-lightbulb"></i> Query Summary</h3>
+                    <p id="summaryText"></p>
+                </div>
+
+                <div class="questions-container">
+                    <h3 class="questions-title">
+                        <i class="fas fa-list"></i>
+                        Top 5 Related Questions
+                    </h3>
+                    <div class="questions-grid" id="questionsGrid">
+                        <!-- Questions will be populated here -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="loading" id="loading" style="display: none;">
+                <div class="spinner"></div>
+                <p>Finding the best questions for you...</p>
+            </div>
+
+            <div class="error" id="error" style="display: none;">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p id="errorMessage"></p>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>Powered by AI • Find questions from LeetCode, GeeksforGeeks, HackerRank, InterviewBit, and CodeChef</p>
+        </footer>
+    </div>
+
+    <script>
+        document.getElementById('searchForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const query = document.getElementById('queryInput').value.trim();
+            if (!query) return;
+            
+            // Show loading state
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('resultsSection').style.display = 'none';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('searchBtn').disabled = true;
+            
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: query })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayResults(data.summary, data.questions);
+                } else {
+                    showError(data.error || 'An error occurred');
+                }
+            } catch (error) {
+                showError('Network error. Please try again.');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('searchBtn').disabled = false;
+            }
+        });
+        
+        function displayResults(summary, questions) {
+            // Show summary
+            document.getElementById('summaryText').textContent = summary;
+            
+            // Display questions
+            const questionsGrid = document.getElementById('questionsGrid');
+            questionsGrid.innerHTML = '';
+            
+            questions.forEach((question, index) => {
+                const questionCard = createQuestionCard(question, index + 1);
+                questionsGrid.appendChild(questionCard);
+            });
+            
+            // Show results
+            document.getElementById('resultsSection').style.display = 'block';
+        }
+        
+        function createQuestionCard(question, index) {
+            const card = document.createElement('div');
+            card.className = 'question-card';
+            
+            const difficultyClass = question.difficulty_level.toLowerCase();
+            
+            card.innerHTML = `
+                <div class="question-header">
+                    <span class="question-number">${index}</span>
+                    <div class="platform-badge platform-${question.platform.toLowerCase().replace(' ', '-')}">
+                        ${question.platform}
+                    </div>
+                </div>
+                
+                <div class="question-content">
+                    <h4 class="question-topic">${question.topic}</h4>
+                    <p class="question-category">${question.category}</p>
+                </div>
+                
+                <div class="question-meta">
+                    <div class="difficulty difficulty-${difficultyClass}">
+                        <i class="fas fa-signal"></i>
+                        ${question.difficulty_level}
+                    </div>
+                    <div class="company">
+                        <i class="fas fa-building"></i>
+                        ${question.company}
+                    </div>
+                </div>
+                
+                <a href="${question.url}" target="_blank" class="question-link">
+                    <i class="fas fa-external-link-alt"></i>
+                    View Problem
+                </a>
+            `;
+            
+            return card;
+        }
+        
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('error').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
