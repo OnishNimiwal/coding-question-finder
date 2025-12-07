@@ -112,6 +112,8 @@
     </div>
 
     <script>
+        // URLs are validated by backend - no need to normalize in frontend
+        
         // View questions for a published question set
         async function viewQuestions(questionId) {
             const modal = document.getElementById('questionsModal');
@@ -153,7 +155,7 @@
                                         ${q.company}
                                     </div>
                                 </div>
-                                <a href="${q.url}" target="_blank" class="question-link">
+                                <a href="${q.url || '#'}" target="_blank" rel="noopener noreferrer" class="question-link">
                                     <i class="fas fa-external-link-alt"></i>
                                     View Problem
                                 </a>

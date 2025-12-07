@@ -19,22 +19,31 @@ except Exception:
 import os
 from dotenv import load_dotenv
 import json
+import re
+import urllib.parse
 from datetime import datetime
 from uuid import uuid4
 
 app = Flask(__name__)
 # Load environment variables from a local .env file if present
 load_dotenv()
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-this-in-production')
-# A small run-identifier used to invalidate sessions created by previous
-# server runs. This ensures that after restarting the dev server the UI
-# will require a fresh login instead of honoring stale browser cookies.
+basedir = os.path.abspath(os.path.dirname(__file__))
+
+# Set SECRET_KEY for Flask sessions (required for session management)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', os.urandom(32).hex())
+
+# Set RUN_ID for session validation (invalidates old sessions on server restart)
 app.config['RUN_ID'] = str(uuid4())
-# Database configuration - Using SQLite for simplicity
-# For production, you might want to use PostgreSQL
-database_url = os.getenv('DATABASE_URL', 'sqlite:///users.db')
+
+# Use DATABASE_URL from .env if available, otherwise default to users.db in project folder
+database_url = os.getenv('DATABASE_URL', f"sqlite:///{os.path.join(basedir, 'users.db')}")
+
+# Optional debug: see exactly where the DB will be
+print("Using database at:", os.path.abspath(database_url.replace('sqlite:///', '')))
+
 if database_url.startswith('postgres://'):
     database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -85,15 +94,59 @@ class QuestionSet(db.Model):
         return self.published_at.strftime('%Y-%m-%d %H:%M') if self.published_at else ''
 
     def to_dict(self):
+        # Parse questions data and ensure URLs are valid
+        questions_data = json.loads(self.questions_data)
+        if isinstance(questions_data, list):
+            for q in questions_data:
+                if isinstance(q, dict) and 'url' in q:
+                    q['url'] = self._normalize_url(q.get('url', ''), q.get('platform', ''), q.get('topic', ''))
+        
         return {
             'id': self.id,
             'query': self.query,
             'summary': self.summary,
-            'questions_data': json.loads(self.questions_data),
+            'questions_data': questions_data,
             'is_published': self.is_published,
             'created_at': self.created_at.isoformat(),
             'published_at': self.published_at.isoformat() if self.published_at else None
         }
+    
+    @staticmethod
+    def _normalize_url(url, platform, topic):
+        """Normalize URL to ensure it's valid"""
+        if not url:
+            topic_enc = urllib.parse.quote_plus(topic or 'coding problem')
+            platform_enc = urllib.parse.quote_plus(platform or 'LeetCode')
+            return f"https://www.google.com/search?q={platform_enc}+{topic_enc}"
+        
+        url = str(url).strip()
+        
+        # If already valid, return as-is
+        if url.startswith(('http://', 'https://')):
+            return url
+        
+        # Fix protocol-relative URLs
+        if url.startswith('//'):
+            return 'https:' + url
+        
+        # Fix relative URLs
+        if url.startswith('/'):
+            platform_lower = (platform or '').lower()
+            if 'leetcode' in platform_lower:
+                return 'https://leetcode.com' + url
+            elif 'geeksforgeeks' in platform_lower or 'gfg' in platform_lower:
+                return 'https://www.geeksforgeeks.org' + url
+            elif 'hackerrank' in platform_lower:
+                return 'https://www.hackerrank.com' + url
+            elif 'interviewbit' in platform_lower:
+                return 'https://www.interviewbit.com' + url
+            elif 'codechef' in platform_lower:
+                return 'https://www.codechef.com' + url
+            else:
+                return 'https://' + url.lstrip('/')
+        
+        # Add https:// if missing
+        return 'https://' + url
 
 # Initialize the Gemini client (resilient):
 # If the Google Generative AI client isn't available or has a different API,
@@ -419,20 +472,87 @@ def search_questions():
         if not query:
             return jsonify({'error': 'Query is required'}), 400
         
-        # Step 1: Summarize the query
-        prompt = f"""
-        Summarize the following query in one short line, separated by triple backticks. {query}
+        # Step 1: Extract company name and summarize the query
+        extract_prompt = f"""
+        Analyze the following query and extract:
+        1. The company name mentioned (if any)
+        2. A brief summary of the coding problem/topic
+        
+        Query: {query}
+        
+        Respond in JSON format with two keys: "company" and "summary"
+        If no company is mentioned, set "company" to "General"
+        Example: {{"company": "Capgemini", "summary": "Palindrome check using dynamic programming"}}
         """
         
-        response_text = get_completion(prompt)
-        if isinstance(response_text, str) and '[AI unavailable' in response_text:
+        extract_response = get_completion(extract_prompt)
+        if isinstance(extract_response, str) and '[AI unavailable' in extract_response:
             return jsonify({'success': False, 'error': 'AI is unavailable in this environment. Configure GOOGLE_API_KEY and try again.'}), 503
         
-        # Step 2: Generate related questions
+        # Parse extracted information
+        extracted_company = "General"
+        summary_text = query
+        
+        try:
+            # Try to extract JSON from response
+            extract_clean = extract_response.strip()
+            if extract_clean.startswith('```'):
+                first_nl = extract_clean.find('\n')
+                if first_nl != -1:
+                    extract_clean = extract_clean[first_nl:].strip()
+                if extract_clean.endswith('```'):
+                    extract_clean = extract_clean[:-3].strip()
+            
+            json_start = extract_clean.find('{')
+            json_end = extract_clean.rfind('}') + 1
+            if json_start != -1 and json_end > json_start:
+                extract_data = json.loads(extract_clean[json_start:json_end])
+                extracted_company = extract_data.get('company', 'General')
+                summary_text = extract_data.get('summary', query)
+        except:
+            # If extraction fails, try to find company name in query using simple pattern
+            query_lower = query.lower()
+            common_companies = ['capgemini', 'google', 'microsoft', 'amazon', 'facebook', 'meta', 'apple', 
+                             'netflix', 'uber', 'airbnb', 'oracle', 'ibm', 'adobe', 'salesforce', 
+                             'twitter', 'linkedin', 'paypal', 'visa', 'mastercard', 'goldman sachs',
+                             'morgan stanley', 'jpmorgan', 'accenture', 'tcs', 'infosys', 'wipro',
+                             'cognizant', 'hcl', 'tech mahindra', 'deloitte', 'pwc', 'ey', 'kpmg']
+            for company in common_companies:
+                if company in query_lower:
+                    extracted_company = company.title()
+                    break
+        
+        # Step 2: Generate related questions with extracted company
         final_prompt = f"""
-        Generate a list of five consist of url of problem, coding platform, topic name, difficulty_level, company and category in 
-        json format having keys as "url", "platform", "topic","difficulty_level","company" and "category" for the following query, separated by triple backticks. 
-        {response_text}
+        Generate a list of exactly 5 coding problems related to: {summary_text}
+        
+        IMPORTANT: The user mentioned the company "{extracted_company}" in their query. Use this company name for the "company" field in ALL 5 questions.
+        
+        For each problem, provide a JSON object with the following keys:
+        - "url": A COMPLETE, VALID absolute URL starting with https:// to the actual problem page. Examples:
+          * LeetCode: "https://leetcode.com/problems/palindrome-partitioning/"
+          * GeeksforGeeks: "https://www.geeksforgeeks.org/palindrome-partitioning-dp-17/"
+          * HackerRank: "https://www.hackerrank.com/challenges/palindrome-index/problem"
+          * InterviewBit: "https://www.interviewbit.com/problems/palindrome-partitioning/"
+          * CodeChef: "https://www.codechef.com/problems/PALIN"
+          CRITICAL: The URL must be a complete, working URL that starts with https://
+        - "platform": The coding platform name (e.g., "LeetCode", "GeeksforGeeks", "HackerRank", "InterviewBit", "CodeChef")
+        - "topic": The topic name of the problem (e.g., "Palindrome Check", "Palindrome Partitioning")
+        - "difficulty_level": The difficulty (e.g., "Easy", "Medium", "Hard")
+        - "company": MUST be "{extracted_company}" (use this exact company name from the user's query)
+        - "category": The category/type of problem (e.g., "String", "Dynamic Programming", "Array")
+        
+        Return ONLY a valid JSON array with 5 objects. Do not include any markdown formatting, code blocks, or extra text.
+        CRITICAL: 
+        1. All URLs must be complete absolute URLs starting with https://
+        2. ALL 5 questions must have "company": "{extracted_company}"
+        
+        Example format:
+        [
+          {{"url": "https://leetcode.com/problems/palindrome-partitioning/", "platform": "LeetCode", "topic": "Palindrome Partitioning", "difficulty_level": "Medium", "company": "{extracted_company}", "category": "Dynamic Programming"}},
+          {{"url": "https://www.geeksforgeeks.org/palindrome-partitioning-dp-17/", "platform": "GeeksforGeeks", "topic": "Palindrome Partitioning", "difficulty_level": "Medium", "company": "{extracted_company}", "category": "Dynamic Programming"}},
+          ... (3 more questions, ALL with company: "{extracted_company}")
+        ]
         """
         
         final_response = get_completion(final_prompt)
@@ -442,15 +562,82 @@ def search_questions():
         # Clean the response
         # Find the start and end of the JSON block to handle responses
         # that might include extra text like "```json\n[...]\n```"
-        json_start = final_response.find('[')
-        json_end = final_response.rfind(']') + 1
-        if json_start == -1 or json_end == 0:
-            raise json.JSONDecodeError("No JSON array found in AI response", final_response, 0)
+        clean_response = final_response.strip()
         
-        clean_response = final_response[json_start:json_end]
+        # Remove markdown code blocks if present
+        if clean_response.startswith('```'):
+            # Find the first newline after ```
+            first_newline = clean_response.find('\n')
+            if first_newline != -1:
+                clean_response = clean_response[first_newline:].strip()
+            # Remove trailing ```
+            if clean_response.endswith('```'):
+                clean_response = clean_response[:-3].strip()
+        
+        # Find JSON array boundaries
+        json_start = clean_response.find('[')
+        json_end = clean_response.rfind(']') + 1
+        
+        if json_start == -1 or json_end == 0:
+            # Try to find any JSON structure
+            json_start = clean_response.find('{')
+            if json_start != -1:
+                # Might be a single object, wrap in array
+                json_end = clean_response.rfind('}') + 1
+                if json_end > json_start:
+                    clean_response = '[' + clean_response[json_start:json_end] + ']'
+                    json_start = 0
+                    json_end = len(clean_response)
+            
+            if json_start == -1 or json_end == 0:
+                raise json.JSONDecodeError("No JSON array found in AI response", final_response, 0)
+        else:
+            clean_response = clean_response[json_start:json_end]
         
         # Parse JSON response
-        questions_list = json.loads(clean_response)
+        try:
+            questions_list = json.loads(clean_response)
+        except json.JSONDecodeError as e:
+            # Try to fix common issues
+            # Remove any trailing commas before closing brackets
+            clean_response = re.sub(r',\s*}', '}', clean_response)
+            clean_response = re.sub(r',\s*]', ']', clean_response)
+            questions_list = json.loads(clean_response)
+        
+        # Ensure it's a list
+        if not isinstance(questions_list, list):
+            questions_list = [questions_list]
+        
+        # Validate and ensure we have exactly 5 items (or at least some items)
+        if len(questions_list) == 0:
+            raise ValueError("AI returned an empty list of questions")
+        
+        # Ensure all required fields are present and validate URLs
+        required_fields = ['url', 'platform', 'topic', 'difficulty_level', 'company', 'category']
+        for i, q in enumerate(questions_list):
+            if not isinstance(q, dict):
+                raise ValueError(f"Question {i+1} is not a valid object")
+            
+            # Ensure company field exists - use extracted company or default to "General"
+            company_name = str(q.get('company', '')).strip()
+            if not company_name or company_name.lower() == 'general':
+                # Use extracted company from query, or keep existing if it's valid
+                q['company'] = extracted_company
+            else:
+                # Ensure company name is properly capitalized
+                q['company'] = company_name.title()
+            
+            # Ensure all other required fields exist
+            missing = [f for f in required_fields if f not in q or (f != 'company' and not q[f])]
+            if missing:
+                print(f"Warning: Question {i+1} missing fields: {missing}")
+            
+            # Use the same normalization function
+            q['url'] = QuestionSet._normalize_url(
+                q.get('url', ''),
+                q.get('platform', ''),
+                q.get('topic', '')
+            )
         
         # Save to file (optional)
         with open("related_questions.json", "w") as f:
@@ -458,7 +645,7 @@ def search_questions():
         
         return jsonify({
             'success': True,
-            'summary': response_text,
+            'summary': summary_text,
             'questions': questions_list
         })
         
@@ -496,6 +683,19 @@ def save_search():
 
         if not all([query, summary_text, questions_data]):
             return jsonify({'success': False, 'message': 'Missing required data: query, summary, and questions are needed.'}), 400
+        
+        # Validate and normalize URLs before saving
+        if isinstance(questions_data, list):
+            for q in questions_data:
+                if isinstance(q, dict) and 'url' in q:
+                    q['url'] = QuestionSet._normalize_url(
+                        q.get('url', ''),
+                        q.get('platform', ''),
+                        q.get('topic', '')
+                    )
+                # Ensure company field exists
+                if isinstance(q, dict) and 'company' not in q:
+                    q['company'] = 'General'
         
         # Save to database
         published_question = QuestionSet(
@@ -629,6 +829,11 @@ def get_published_question_details(question_id):
 
     except Exception as e:
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+
+@app.route('/captcha')
+def captcha():
+    """Captcha page"""
+    return render_template('captcha.html')
 
 
 @app.route('/init-db')

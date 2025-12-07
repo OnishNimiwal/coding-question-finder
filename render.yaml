@@ -1,0 +1,21 @@
+# Render Blueprint - Optional configuration file
+# This file can be used to define your service configuration
+# You can also configure everything through the Render dashboard
+
+services:
+  - type: web
+    name: coding-questions-finder
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    # Uncomment and configure if using PostgreSQL
+    # database:
+    #   name: coding-questions-db
+    #   databaseName: coding_questions
+    #   user: coding_questions_user
+

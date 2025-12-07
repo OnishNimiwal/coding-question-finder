@@ -275,6 +275,9 @@
             
             const difficultyClass = question.difficulty_level.toLowerCase();
             
+            // URL is already validated by backend - use it directly
+            const problemUrl = question.url || '#';
+            
             card.innerHTML = `
                 <div class="question-header">
                     <span class="question-number">${index}</span>
@@ -299,7 +302,7 @@
                     </div>
                 </div>
                 
-                <a href="${question.url}" target="_blank" class="question-link">
+                <a href="${problemUrl}" target="_blank" rel="noopener noreferrer" class="question-link">
                     <i class="fas fa-external-link-alt"></i>
                     View Problem
                 </a>
@@ -432,6 +435,9 @@
                     
                     let questionsHtml = '<div class="questions-grid">';
                     questionSet.questions_data.forEach((q, index) => {
+                        // URL is already validated by backend - use it directly
+                        const problemUrl = q.url || '#';
+                        
                         questionsHtml += `
                             <div class="question-card">
                                 <div class="question-header">
@@ -454,7 +460,7 @@
                                         ${q.company}
                                     </div>
                                 </div>
-                                <a href="${q.url}" target="_blank" class="question-link">
+                                <a href="${problemUrl}" target="_blank" rel="noopener noreferrer" class="question-link">
                                     <i class="fas fa-external-link-alt"></i>
                                     View Problem
                                 </a>

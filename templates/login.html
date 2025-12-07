@@ -66,6 +66,10 @@
             </form>
 
             <div class="auth-footer">
+                <p>Captcha</p>
+                <input type="checkbox" id="captcha">
+                <a href="{{url_for('captcha')}}"></a>
+
                 <p>Don't have an account? <a href="{{ url_for('register') }}" class="auth-link">Sign up here</a></p>
             </div>
 
