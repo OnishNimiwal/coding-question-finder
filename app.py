@@ -559,6 +559,10 @@ def search_questions():
         if isinstance(final_response, str) and '[AI unavailable' in final_response:
             return jsonify({'success': False, 'error': 'AI is unavailable in this environment. Configure GOOGLE_API_KEY and try again.'}), 503
         
+        # Check if response is empty or None
+        if not final_response or not isinstance(final_response, str) or len(final_response.strip()) == 0:
+            return jsonify({'success': False, 'error': 'AI returned an empty response. Please try again or check your API key.'}), 500
+        
         # Clean the response
         # Find the start and end of the JSON block to handle responses
         # that might include extra text like "```json\n[...]\n```"
@@ -573,6 +577,11 @@ def search_questions():
             # Remove trailing ```
             if clean_response.endswith('```'):
                 clean_response = clean_response[:-3].strip()
+            # Also remove json/python markers
+            if clean_response.startswith('json'):
+                clean_response = clean_response[4:].strip()
+            if clean_response.startswith('python'):
+                clean_response = clean_response[6:].strip()
         
         # Find JSON array boundaries
         json_start = clean_response.find('[')
@@ -590,19 +599,43 @@ def search_questions():
                     json_end = len(clean_response)
             
             if json_start == -1 or json_end == 0:
-                raise json.JSONDecodeError("No JSON array found in AI response", final_response, 0)
-        else:
-            clean_response = clean_response[json_start:json_end]
+                # Log the actual response for debugging
+                print(f"DEBUG: AI Response (first 500 chars): {final_response[:500]}")
+                return jsonify({
+                    'success': False, 
+                    'error': f'AI response format error. Please try again. Response preview: {final_response[:200] if len(final_response) > 200 else final_response}'
+                }), 500
         
-        # Parse JSON response
+        if json_start != -1 and json_end > json_start:
+            clean_response = clean_response[json_start:json_end]
+        else:
+            return jsonify({
+                'success': False, 
+                'error': 'Could not parse AI response. Please try again.'
+            }), 500
+        
+        # Parse JSON response with better error handling
+        questions_list = None
         try:
             questions_list = json.loads(clean_response)
         except json.JSONDecodeError as e:
-            # Try to fix common issues
-            # Remove any trailing commas before closing brackets
-            clean_response = re.sub(r',\s*}', '}', clean_response)
-            clean_response = re.sub(r',\s*]', ']', clean_response)
-            questions_list = json.loads(clean_response)
+            # Try to fix common JSON issues
+            try:
+                # Remove trailing commas
+                clean_response = re.sub(r',\s*}', '}', clean_response)
+                clean_response = re.sub(r',\s*]', ']', clean_response)
+                # Remove comments (if any)
+                clean_response = re.sub(r'//.*?\n', '\n', clean_response)
+                clean_response = re.sub(r'/\*.*?\*/', '', clean_response, flags=re.DOTALL)
+                questions_list = json.loads(clean_response)
+            except json.JSONDecodeError as e2:
+                # Log for debugging
+                print(f"DEBUG: JSON Parse Error: {str(e2)}")
+                print(f"DEBUG: Cleaned response (first 500 chars): {clean_response[:500]}")
+                return jsonify({
+                    'success': False, 
+                    'error': f'Failed to parse AI response as JSON. Please try again. Error: {str(e2)[:100]}'
+                }), 500
         
         # Ensure it's a list
         if not isinstance(questions_list, list):
