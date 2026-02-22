@@ -79,21 +79,28 @@ db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
 # Initialize database tables on startup (essential for Vercel serverless)
-# Wrap in try-except to prevent the entire app from crashing if DB is unreachable
 with app.app_context():
+    print("--- STARTING DATABASE INITIALIZATION ---")
+    print(f"Targeting: {database_url}")
     max_retries = 3
     for attempt in range(max_retries):
         try:
+            # We use a raw SQL check to see if we can actually reach the DB
+            from sqlalchemy import text
+            db.session.execute(text("SELECT 1"))
+            print(f"Connection check successful on attempt {attempt+1}")
+            
             db.create_all()
-            print("Database tables initialized successfully.")
+            print("db.create_all() call finished.")
             break
         except Exception as e:
             if attempt < max_retries - 1:
                 import time
-                print(f"DATABASE INITIALIZATION ATTEMPT {attempt+1} FAILED: {e}. Retrying...")
-                time.sleep(1)
+                print(f"INITIALIZATION ATTEMPT {attempt+1} FAILED. Error: {str(e)}")
+                time.sleep(2)
             else:
-                print(f"CRITICAL DATABASE ERROR: Could not create tables after {max_retries} attempts. {e}")
+                print(f"!!! CRITICAL DATABASE ERROR !!!")
+                print(f"Final error after {max_retries} attempts: {str(e)}")
 
 # Database Models
 class User(db.Model):
@@ -915,22 +922,38 @@ def captcha():
 
 @app.route('/init-db')
 def init_db():
-    """Initialize database tables"""
+    """Initialize database tables with detailed feedback"""
+    diagnostics = {
+        'url_type': 'PostgreSQL' if 'postgresql' in database_url else 'SQLite',
+        'masked_url': database_url.replace(database_url.split('@')[0].split(':')[-1], '****') if '@' in database_url else 'SQLite',
+        'vercel_env': bool(os.getenv('VERCEL')),
+        'attempts': []
+    }
+    
     try:
         with app.app_context():
             max_retries = 3
             for attempt in range(max_retries):
                 try:
+                    from sqlalchemy import text
+                    db.session.execute(text("SELECT 1"))
                     db.create_all()
-                    return jsonify({'success': True, 'message': 'Database initialized successfully'})
+                    db.session.commit()
+                    diagnostics['success'] = True
+                    diagnostics['message'] = 'Database initialized successfully!'
+                    return jsonify(diagnostics)
                 except Exception as e:
+                    error_msg = str(e)
+                    diagnostics['attempts'].append(f"Attempt {attempt+1} failed: {error_msg}")
                     if attempt < max_retries - 1:
                         import time
                         time.sleep(1)
                     else:
                         raise e
     except Exception as e:
-        return jsonify({'success': False, 'message': f'Error initializing database: {str(e)}'}), 500
+        diagnostics['success'] = False
+        diagnostics['error'] = str(e)
+        return jsonify(diagnostics), 500
 
 if __name__ == '__main__':
     # For local production/testing
