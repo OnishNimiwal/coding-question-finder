@@ -55,12 +55,18 @@ db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
 # Initialize database tables on startup (essential for Vercel serverless)
+# Wrap in try-except to prevent the entire app from crashing if DB is unreachable
 with app.app_context():
     try:
+        # If using PostgreSQL, ensure we have a timeout so we don't hang startup
+        if database_url.startswith('postgresql'):
+            app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'connect_args': {'connect_timeout': 5}}
+        
         db.create_all()
         print("Database tables initialized successfully.")
     except Exception as e:
-        print(f"Database initialization error: {e}")
+        print(f"DATABASE INITIALIZATION WARNING: {e}")
+        # We don't raise here, so the app can still serve the health check or landing page
 
 # Database Models
 class User(db.Model):
@@ -172,12 +178,10 @@ try:
 
     if not api_key:
         # The API key is essential for the app to work.
-        print("\nFATAL ERROR: The 'GOOGLE_API_KEY' environment variable is not set.")
-        print("Please get an API key from Google AI Studio and set the environment variable.\n")
+        print("\nERROR: The 'GOOGLE_API_KEY' environment variable is not set.")
         _GENAI_AVAILABLE = False
-        raise ValueError("API key not configured. Please set the GOOGLE_API_KEY environment variable.")
-
-    genai.configure(api_key=api_key)
+    else:
+        genai.configure(api_key=api_key)
 
     # List of models to try in order of preference.
     # 'gemini-pro' is a stable name often available on v1beta.
