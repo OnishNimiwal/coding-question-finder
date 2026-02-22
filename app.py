@@ -723,10 +723,6 @@ def search_questions():
                 q.get('topic', '')
             )
         
-        # Save to file (optional)
-        with open("related_questions.json", "w") as f:
-            json.dump(questions_list, f, indent=2)
-        
         return jsonify({
             'success': True,
             'summary': summary_text,
