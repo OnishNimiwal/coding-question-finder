@@ -81,16 +81,23 @@ bcrypt = Bcrypt(app)
 # Initialize database tables on startup (essential for Vercel serverless)
 # Wrap in try-except to prevent the entire app from crashing if DB is unreachable
 with app.app_context():
-    try:
-        
-        db.create_all()
-        print("Database tables initialized successfully.")
-    except Exception as e:
-        print(f"DATABASE INITIALIZATION WARNING: {e}")
-        # We don't raise here, so the app can still serve the health check or landing page
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            db.create_all()
+            print("Database tables initialized successfully.")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                import time
+                print(f"DATABASE INITIALIZATION ATTEMPT {attempt+1} FAILED: {e}. Retrying...")
+                time.sleep(1)
+            else:
+                print(f"CRITICAL DATABASE ERROR: Could not create tables after {max_retries} attempts. {e}")
 
 # Database Models
 class User(db.Model):
+    __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
@@ -116,7 +123,7 @@ class User(db.Model):
 
 class QuestionSet(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    mentor_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    mentor_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     query = db.Column(db.String(500), nullable=False)
     summary = db.Column(db.String(200), nullable=False)
     questions_data = db.Column(db.Text, nullable=False)  # JSON string of questions
@@ -911,8 +918,17 @@ def init_db():
     """Initialize database tables"""
     try:
         with app.app_context():
-            db.create_all()
-        return jsonify({'success': True, 'message': 'Database initialized successfully'})
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    db.create_all()
+                    return jsonify({'success': True, 'message': 'Database initialized successfully'})
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(1)
+                    else:
+                        raise e
     except Exception as e:
         return jsonify({'success': False, 'message': f'Error initializing database: {str(e)}'}), 500
 
