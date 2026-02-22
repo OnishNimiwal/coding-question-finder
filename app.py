@@ -255,7 +255,7 @@ try:
                 model = genai.GenerativeModel(model_name)
                 response = model.generate_content(prompt, generation_config={
                     "temperature": 0,
-                    "max_output_tokens": 800,
+                    "max_output_tokens": 2048,
                 })
                 return response.text
             except Exception as e:
@@ -634,28 +634,32 @@ def search_questions():
             if clean_response.startswith('python'):
                 clean_response = clean_response[6:].strip()
         
-        # Find JSON array boundaries
+        # Find JSON array boundaries carefully
+        # First, try to find the standard [ ... ] array
         json_start = clean_response.find('[')
         json_end = clean_response.rfind(']') + 1
         
-        if json_start == -1 or json_end == 0:
-            # Try to find any JSON structure
+        # If we didn't find an array, maybe it's a single object { ... }
+        if json_start == -1:
             json_start = clean_response.find('{')
-            if json_start != -1:
-                # Might be a single object, wrap in array
-                json_end = clean_response.rfind('}') + 1
-                if json_end > json_start:
-                    clean_response = '[' + clean_response[json_start:json_end] + ']'
+            json_end = clean_response.rfind('}') + 1
+            if json_start != -1 and json_end > json_start:
+                # Wrap it in an array so the rest of the logic works
+                try:
+                    obj_str = clean_response[json_start:json_end]
+                    json.loads(obj_str) # verify it's valid
+                    clean_response = '[' + obj_str + ']'
                     json_start = 0
                     json_end = len(clean_response)
-            
-            if json_start == -1 or json_end == 0:
-                # Log the actual response for debugging
-                print(f"DEBUG: AI Response (first 500 chars): {final_response[:500]}")
-                return jsonify({
-                    'success': False, 
-                    'error': f'AI response format error. Please try again. Response preview: {final_response[:200] if len(final_response) > 200 else final_response}'
-                }), 500
+                except:
+                    pass
+
+        # If we still don't have a clear start/end, show error with more info
+        if json_start == -1 or (json_end <= json_start and json_start != -1):
+            return jsonify({
+                'success': False, 
+                'error': f'AI response format error. Please try again. (Partial result found: {clean_response[:50]}...)'
+            }), 500
         
         if json_start != -1 and json_end > json_start:
             clean_response = clean_response[json_start:json_end]
