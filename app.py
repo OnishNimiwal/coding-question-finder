@@ -50,15 +50,20 @@ if database_url.startswith('postgres://'):
 elif database_url.startswith('postgresql://'):
     database_url = database_url.replace('postgresql://', 'postgresql+pg8000://', 1)
 
-# Fix for Neon's SSL requirement with pg8000
-if 'postgresql+pg8000' in database_url and 'sslmode' not in database_url:
-    if '?' in database_url:
-        database_url += '&sslmode=verify-full'
-    else:
-        database_url += '?sslmode=verify-full'
-
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Configure engine options for PostgreSQL/pg8000
+if 'postgresql' in database_url:
+    engine_options = {"connect_args": {}}
+    
+    if 'pg8000' in database_url:
+        engine_options["connect_args"]["ssl_context"] = True
+        engine_options["connect_args"]["timeout"] = 5
+    else:
+        engine_options["connect_args"]["connect_timeout"] = 5
+        
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options
 
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
@@ -67,9 +72,6 @@ bcrypt = Bcrypt(app)
 # Wrap in try-except to prevent the entire app from crashing if DB is unreachable
 with app.app_context():
     try:
-        # If using PostgreSQL, ensure we have a timeout so we don't hang startup
-        if database_url.startswith('postgresql'):
-            app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'connect_args': {'connect_timeout': 5}}
         
         db.create_all()
         print("Database tables initialized successfully.")
