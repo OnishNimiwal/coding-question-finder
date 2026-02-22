@@ -50,6 +50,16 @@ if database_url.startswith('postgres://'):
 elif database_url.startswith('postgresql://'):
     database_url = database_url.replace('postgresql://', 'postgresql+pg8000://', 1)
 
+# Clean query parameters for pg8000 (removes sslmode and channel_binding)
+if 'pg8000' in database_url:
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+    parsed = urlparse(database_url)
+    query = parse_qs(parsed.query)
+    query.pop('sslmode', None)
+    query.pop('channel_binding', None)
+    new_query = urlencode(query, doseq=True)
+    database_url = urlunparse(parsed._replace(query=new_query))
+
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
