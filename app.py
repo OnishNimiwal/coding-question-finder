@@ -35,11 +35,15 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', os.urandom(32).hex())
 # Set RUN_ID for session validation (invalidates old sessions on server restart)
 app.config['RUN_ID'] = str(uuid4())
 
-# Use DATABASE_URL from .env if available, otherwise default to users.db in project folder
-database_url = os.getenv('DATABASE_URL', f"sqlite:///{os.path.join(basedir, 'users.db')}")
+# Use DATABASE_URL from .env if available, otherwise default to users.db
+# On Vercel, we use /tmp/users.db as the project root is read-only
+if os.getenv('VERCEL'):
+    database_url = os.getenv('DATABASE_URL', f"sqlite:////tmp/users.db")
+else:
+    database_url = os.getenv('DATABASE_URL', f"sqlite:///{os.path.join(basedir, 'users.db')}")
 
 # Optional debug: see exactly where the DB will be
-print("Using database at:", os.path.abspath(database_url.replace('sqlite:///', '')))
+print("Using database at:", database_url)
 
 if database_url.startswith('postgres://'):
     database_url = database_url.replace('postgres://', 'postgresql://', 1)
@@ -49,6 +53,14 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
+
+# Initialize database tables on startup (essential for Vercel serverless)
+with app.app_context():
+    try:
+        db.create_all()
+        print("Database tables initialized successfully.")
+    except Exception as e:
+        print(f"Database initialization error: {e}")
 
 # Database Models
 class User(db.Model):
@@ -880,11 +892,8 @@ def init_db():
         return jsonify({'success': False, 'message': f'Error initializing database: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        print("Database tables created successfully!")
-
-    # For production deployment on Render
+    # For local production/testing
     from waitress import serve
     port = int(os.getenv('PORT', 8080))
+    print(f"Starting server on port {port}...")
     serve(app, host='0.0.0.0', port=port)
