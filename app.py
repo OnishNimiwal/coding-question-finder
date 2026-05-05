@@ -523,168 +523,91 @@ def search_questions():
         if not query:
             return jsonify({'error': 'Query is required'}), 400
         
-        # Step 1: Extract company name and summarize the query
-        extract_prompt = f"""
-        Analyze the following query and extract:
-        1. The company name mentioned (if any)
-        2. A brief summary of the coding problem/topic
+        # Combine company extraction, summarization, and question generation into ONE prompt
+        # to avoid Vercel timeouts (usually 10s for free tier).
+        combined_prompt = f"""
+        Analyze the following query from a user: "{query}"
         
-        Query: {query}
-        
-        Respond in JSON format with two keys: "company" and "summary"
-        If no company is mentioned, set "company" to "General"
-        Example: {{"company": "Capgemini", "summary": "Palindrome check using dynamic programming"}}
-        """
-        
-        extract_response = get_completion(extract_prompt)
-        if isinstance(extract_response, str) and '[AI unavailable' in extract_response:
-            return jsonify({'success': False, 'error': 'AI is unavailable in this environment. Configure GOOGLE_API_KEY and try again.'}), 503
-        
-        # Parse extracted information
-        extracted_company = "General"
-        summary_text = query
-        
-        try:
-            # Try to extract JSON from response
-            extract_clean = extract_response.strip()
-            if extract_clean.startswith('```'):
-                first_nl = extract_clean.find('\n')
-                if first_nl != -1:
-                    extract_clean = extract_clean[first_nl:].strip()
-                if extract_clean.endswith('```'):
-                    extract_clean = extract_clean[:-3].strip()
-            
-            json_start = extract_clean.find('{')
-            json_end = extract_clean.rfind('}') + 1
-            if json_start != -1 and json_end > json_start:
-                extract_data = json.loads(extract_clean[json_start:json_end])
-                extracted_company = extract_data.get('company', 'General')
-                summary_text = extract_data.get('summary', query)
-        except:
-            # If extraction fails, try to find company name in query using simple pattern
-            query_lower = query.lower()
-            common_companies = ['capgemini', 'google', 'microsoft', 'amazon', 'facebook', 'meta', 'apple', 
-                             'netflix', 'uber', 'airbnb', 'oracle', 'ibm', 'adobe', 'salesforce', 
-                             'twitter', 'linkedin', 'paypal', 'visa', 'mastercard', 'goldman sachs',
-                             'morgan stanley', 'jpmorgan', 'accenture', 'tcs', 'infosys', 'wipro',
-                             'cognizant', 'hcl', 'tech mahindra', 'deloitte', 'pwc', 'ey', 'kpmg']
-            for company in common_companies:
-                if company in query_lower:
-                    extracted_company = company.title()
-                    break
-        
-        # Step 2: Generate related questions with extracted company
-        final_prompt = f"""
-        Generate a list of exactly 5 coding problems related to: {summary_text}
-        
-        IMPORTANT: The user mentioned the company "{extracted_company}" in their query. Use this company name for the "company" field in ALL 5 questions.
+        First, extract the company name mentioned (if any, otherwise "General").
+        Second, extract a brief summary of the coding problem/topic.
+        Third, generate a list of exactly 5 coding problems related to the summary.
         
         For each problem, provide a JSON object with the following keys:
-        - "url": A COMPLETE, VALID absolute URL starting with https:// to the actual problem page. Examples:
-          * LeetCode: "https://leetcode.com/problems/palindrome-partitioning/"
-          * GeeksforGeeks: "https://www.geeksforgeeks.org/palindrome-partitioning-dp-17/"
-          * HackerRank: "https://www.hackerrank.com/challenges/palindrome-index/problem"
-          * InterviewBit: "https://www.interviewbit.com/problems/palindrome-partitioning/"
-          * CodeChef: "https://www.codechef.com/problems/PALIN"
-          CRITICAL: The URL must be a complete, working URL that starts with https://
-        - "platform": The coding platform name (e.g., "LeetCode", "GeeksforGeeks", "HackerRank", "InterviewBit", "CodeChef")
-        - "topic": The topic name of the problem (e.g., "Palindrome Check", "Palindrome Partitioning")
+        - "url": A COMPLETE, VALID absolute URL starting with https:// to the actual problem page.
+        - "platform": The coding platform name.
+        - "topic": The topic name of the problem.
         - "difficulty_level": The difficulty (e.g., "Easy", "Medium", "Hard")
-        - "company": MUST be "{extracted_company}" (use this exact company name from the user's query)
-        - "category": The category/type of problem (e.g., "String", "Dynamic Programming", "Array")
+        - "company": MUST be the company name extracted in the first step.
+        - "category": The category/type of problem.
         
-        Return ONLY a valid JSON array with 5 objects. Do not include any markdown formatting, code blocks, or extra text.
-        CRITICAL: 
-        1. All URLs must be complete absolute URLs starting with https://
-        2. ALL 5 questions must have "company": "{extracted_company}"
+        Return a single JSON object with three keys:
+        - "company": The extracted company name
+        - "summary": The extracted summary
+        - "questions": An array of the 5 question objects as described above.
         
         Example format:
-        [
-          {{"url": "https://leetcode.com/problems/palindrome-partitioning/", "platform": "LeetCode", "topic": "Palindrome Partitioning", "difficulty_level": "Medium", "company": "{extracted_company}", "category": "Dynamic Programming"}},
-          {{"url": "https://www.geeksforgeeks.org/palindrome-partitioning-dp-17/", "platform": "GeeksforGeeks", "topic": "Palindrome Partitioning", "difficulty_level": "Medium", "company": "{extracted_company}", "category": "Dynamic Programming"}},
-          ... (3 more questions, ALL with company: "{extracted_company}")
-        ]
+        {{
+          "company": "Google",
+          "summary": "Palindrome check problems",
+          "questions": [
+            {{"url": "https://leetcode.com/problems/palindrome-partitioning/", "platform": "LeetCode", "topic": "Palindrome Partitioning", "difficulty_level": "Medium", "company": "Google", "category": "Dynamic Programming"}},
+            {{"url": "https://www.geeksforgeeks.org/palindrome-partitioning-dp-17/", "platform": "GeeksforGeeks", "topic": "Palindrome Partitioning", "difficulty_level": "Medium", "company": "Google", "category": "Dynamic Programming"}}
+          ]
+        }}
+        
+        Return ONLY valid JSON. Do not include markdown formatting or extra text.
         """
         
-        final_response = get_completion(final_prompt)
-        if isinstance(final_response, str) and '[AI unavailable' in final_response:
+        ai_response = get_completion(combined_prompt)
+        if isinstance(ai_response, str) and '[AI unavailable' in ai_response:
             return jsonify({'success': False, 'error': 'AI is unavailable in this environment. Configure GOOGLE_API_KEY and try again.'}), 503
         
         # Check if response is empty or None
-        if not final_response or not isinstance(final_response, str) or len(final_response.strip()) == 0:
+        if not ai_response or not isinstance(ai_response, str) or len(ai_response.strip()) == 0:
             return jsonify({'success': False, 'error': 'AI returned an empty response. Please try again or check your API key.'}), 500
         
         # Clean the response
-        # Find the start and end of the JSON block to handle responses
-        # that might include extra text like "```json\n[...]\n```"
-        clean_response = final_response.strip()
+        clean_response = ai_response.strip()
         
         # Remove markdown code blocks if present
         if clean_response.startswith('```'):
-            # Find the first newline after ```
             first_newline = clean_response.find('\n')
             if first_newline != -1:
                 clean_response = clean_response[first_newline:].strip()
-            # Remove trailing ```
             if clean_response.endswith('```'):
                 clean_response = clean_response[:-3].strip()
-            # Also remove json/python markers
             if clean_response.startswith('json'):
                 clean_response = clean_response[4:].strip()
             if clean_response.startswith('python'):
                 clean_response = clean_response[6:].strip()
         
-        # Find JSON array boundaries carefully
-        # First, try to find the standard [ ... ] array
-        json_start = clean_response.find('[')
-        json_end = clean_response.rfind(']') + 1
-        
-        # If we didn't find an array, maybe it's a single object { ... }
-        if json_start == -1:
-            json_start = clean_response.find('{')
-            json_end = clean_response.rfind('}') + 1
-            if json_start != -1 and json_end > json_start:
-                # Wrap it in an array so the rest of the logic works
-                try:
-                    obj_str = clean_response[json_start:json_end]
-                    json.loads(obj_str) # verify it's valid
-                    clean_response = '[' + obj_str + ']'
-                    json_start = 0
-                    json_end = len(clean_response)
-                except:
-                    pass
-
-        # If we still don't have a clear start/end, show error with more info
-        if json_start == -1 or (json_end <= json_start and json_start != -1):
-            return jsonify({
-                'success': False, 
-                'error': f'AI response format error. Please try again. (Partial result found: {clean_response[:50]}...)'
-            }), 500
+        # Find JSON object boundaries
+        json_start = clean_response.find('{')
+        json_end = clean_response.rfind('}') + 1
         
         if json_start != -1 and json_end > json_start:
             clean_response = clean_response[json_start:json_end]
         else:
             return jsonify({
                 'success': False, 
-                'error': 'Could not parse AI response. Please try again.'
+                'error': f'AI response format error. Please try again. (Partial result found: {clean_response[:50]}...)'
             }), 500
         
-        # Parse JSON response with better error handling
-        questions_list = None
+        # Parse JSON response
+        parsed_data = None
         try:
-            questions_list = json.loads(clean_response)
+            parsed_data = json.loads(clean_response)
         except json.JSONDecodeError as e:
             # Try to fix common JSON issues
             try:
                 # Remove trailing commas
                 clean_response = re.sub(r',\s*}', '}', clean_response)
                 clean_response = re.sub(r',\s*]', ']', clean_response)
-                # Remove comments (if any)
+                # Remove comments
                 clean_response = re.sub(r'//.*?\n', '\n', clean_response)
                 clean_response = re.sub(r'/\*.*?\*/', '', clean_response, flags=re.DOTALL)
-                questions_list = json.loads(clean_response)
+                parsed_data = json.loads(clean_response)
             except json.JSONDecodeError as e2:
-                # Log for debugging
                 print(f"DEBUG: JSON Parse Error: {str(e2)}")
                 print(f"DEBUG: Cleaned response (first 500 chars): {clean_response[:500]}")
                 return jsonify({
@@ -692,11 +615,15 @@ def search_questions():
                     'error': f'Failed to parse AI response as JSON. Please try again. Error: {str(e2)[:100]}'
                 }), 500
         
+        extracted_company = parsed_data.get('company', 'General')
+        summary_text = parsed_data.get('summary', query)
+        questions_list = parsed_data.get('questions', [])
+        
         # Ensure it's a list
         if not isinstance(questions_list, list):
             questions_list = [questions_list]
         
-        # Validate and ensure we have exactly 5 items (or at least some items)
+        # Validate and ensure we have some items
         if len(questions_list) == 0:
             raise ValueError("AI returned an empty list of questions")
         
@@ -706,19 +633,12 @@ def search_questions():
             if not isinstance(q, dict):
                 raise ValueError(f"Question {i+1} is not a valid object")
             
-            # Ensure company field exists - use extracted company or default to "General"
+            # Ensure company field exists
             company_name = str(q.get('company', '')).strip()
             if not company_name or company_name.lower() == 'general':
-                # Use extracted company from query, or keep existing if it's valid
                 q['company'] = extracted_company
             else:
-                # Ensure company name is properly capitalized
                 q['company'] = company_name.title()
-            
-            # Ensure all other required fields exist
-            missing = [f for f in required_fields if f not in q or (f != 'company' and not q[f])]
-            if missing:
-                print(f"Warning: Question {i+1} missing fields: {missing}")
             
             # Use the same normalization function
             q['url'] = QuestionSet._normalize_url(
